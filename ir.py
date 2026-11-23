@@ -10,9 +10,14 @@ count = 0
 MAX = 100
 buffer = [0]*MAX
 
+class IRException(Exception):
+    def __init__(self,message):
+        super().__init__(message)
+
+
+
 class decodeReturn:
     def __init__(self,error=False,message=None,decoded=None,addr=None):
-        self.error=error
         self.message=message
         self.decoded=decoded
         self.addr=addr
@@ -29,7 +34,6 @@ def on_edge(pin:Pin):
 ir.irq(trigger=Pin.IRQ_FALLING|Pin.IRQ_RISING,handler=on_edge)
 
 
-
 def _near(v,target,tol=0.3)->bool:
     return target * (1-tol) < v < target * (1+tol) 
 
@@ -41,23 +45,23 @@ def decode(buffer,n)->decodeReturn:
     if n == 4:
         return decodeReturn(message="repeat") 
     elif n<68:
-        return decodeReturn(error=True,message="less then 67 edges") 
+        raise IRException("less then 67 edges")
     d_buf = [time.ticks_diff(buffer[i],buffer[i-1]) for i in range(1,n)]
     if not _start(d_buf[:2]):
-        return decodeReturn(error=True,message="start bit didn't match")
+        raise IRException("start bit didn't match")
     bits = 0
     for i in range(32):
         d = d_buf[3+2*i]
         if _near(d,1687):
             bits |= (1<<i)
         elif not _near(d,562):
-            return decodeReturn(error=True,message=f"{i}th bit corrupted")
+            raise IRException("{i}th bit corrupted")
         
     addr,addr_inv = bits & 0xFF, (bits>>8) & 0xFF
     cmd,cmd_inv = (bits>>16) & 0xFF, (bits>>24) & 0xFF
     
-    if cmd ^ cmd_inv != 0xFF: return decodeReturn(error=True,message="cmd inverse didn't match")
-    if addr ^ addr_inv != 0xFF: return decodeReturn(error=True,message="addr inverse didn't match")
+    if cmd ^ cmd_inv != 0xFF: raise IRException("cmd inverse didn't match")
+    if addr ^ addr_inv != 0xFF: raise IRException("addr inverse didn't match")
     
     return decodeReturn(decoded=cmd,addr=addr)
     
@@ -72,8 +76,8 @@ def main():
         if count>0 and time.ticks_diff(time.ticks_us(),buffer[count-1])>20_000:
             #print the edges and the durations
             n=count
-            decode_obj=decode(buffer,n)
-            if not decode_obj.error:
+            try:
+                decode_obj = decode(buffer, n)
                 ir.irq(handler=None)
                 try:
                     if decode_obj.decoded is not None:
@@ -83,8 +87,8 @@ def main():
                 finally:                
                     count=0
                     ir.irq(trigger=Pin.IRQ_FALLING|Pin.IRQ_RISING,handler=on_edge)      
-            else:
-                print(f"error:{decode_obj.error}, message:{decode_obj.message}")
+            except IRException as e:
+                print(f"error:{e}, message:{e.message}")
                 count=0
                 
         time.sleep_ms(5)
